@@ -229,6 +229,16 @@ dbus_bool_t        dbus_connection_send_with_reply              (DBusConnection 
                                                                  DBusMessage                *message,
                                                                  DBusPendingCall           **pending_return,
                                                                  int                         timeout_milliseconds);
+
+DBUS_EXPORT
+dbus_bool_t        dbus_connection_send_with_reply_set_notify   (DBusConnection             *connection,
+                                                                 DBusMessage                *message,
+                                                                 DBusPendingCall           **pending_return,
+                                                                 DBusPendingCallNotifyFunction function0,
+                                                                 void                      * user_data0,
+                                                                 DBusFreeFunction            free_user_data0,
+                                                                 int                         timeout_milliseconds);
+
 DBUS_EXPORT
 DBusMessage *      dbus_connection_send_with_reply_and_block    (DBusConnection             *connection,
                                                                  DBusMessage                *message,
