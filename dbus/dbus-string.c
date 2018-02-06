@@ -744,6 +744,22 @@ _dbus_string_get_length (const DBusString  *str)
 }
 #endif /* !_dbus_string_get_length */
 
+/* Only have the function if we don't have the macro */
+#ifndef _dbus_string_get_allocated
+/**
+ * Gets the allocated length of a string (not including nul termination).
+ *
+ * @returns the allocated length.
+ */
+int
+_dbus_string_get_allocated(const DBusString  *str)
+{
+  DBUS_CONST_STRING_PREAMBLE (str);
+
+  return real->allocated;
+}
+#endif /* !_dbus_string_get_allocated */
+
 /**
  * Makes a string longer by the given number of bytes.  Checks whether
  * adding additional_length to the current length would overflow an

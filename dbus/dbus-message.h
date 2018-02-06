@@ -138,6 +138,9 @@ dbus_bool_t   dbus_message_set_sender       (DBusMessage   *message,
 DBUS_EXPORT
 const char*   dbus_message_get_sender       (DBusMessage   *message);
 DBUS_EXPORT
+dbus_bool_t   dbus_message_set_signature    (DBusMessage   *message,
+                                             const char    *signature);
+DBUS_EXPORT
 const char*   dbus_message_get_signature    (DBusMessage   *message);
 DBUS_EXPORT
 void          dbus_message_set_no_reply     (DBusMessage   *message,
@@ -265,6 +268,17 @@ dbus_bool_t dbus_message_iter_close_container    (DBusMessageIter *iter,
 DBUS_EXPORT
 void        dbus_message_iter_abandon_container  (DBusMessageIter *iter,
                                                   DBusMessageIter *sub);
+DBUS_EXPORT
+char*       dbus_message_get_body                (DBusMessage   *message);
+
+DBUS_EXPORT
+dbus_bool_t dbus_message_set_body_length         (DBusMessage   *message,
+                                                  int length);
+DBUS_EXPORT
+int         dbus_message_get_body_length         (DBusMessage   *message);
+
+DBUS_EXPORT
+int         dbus_message_get_body_allocated      (DBusMessage   *message);
 
 DBUS_EXPORT
 void dbus_message_lock    (DBusMessage  *message);

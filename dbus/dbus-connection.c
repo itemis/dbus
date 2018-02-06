@@ -1207,8 +1207,7 @@ _dbus_connection_do_iteration_unlocked (DBusConnection *connection,
   if (connection->n_outgoing == 0)
     flags &= ~DBUS_ITERATION_DO_WRITING;
 
-  if (_dbus_connection_acquire_io_path (connection,
-					(flags & DBUS_ITERATION_BLOCK) ? timeout_milliseconds : 0))
+  if (_dbus_connection_acquire_io_path (connection, timeout_milliseconds))
     {
       HAVE_LOCK_CHECK (connection);
       
@@ -2525,7 +2524,7 @@ _dbus_connection_block_pending_call (DBusPendingCall *pending)
         {          
           /* block again, we don't have the reply buffered yet. */
           _dbus_connection_do_iteration_unlocked (connection,
-                                                  NULL,
+                                                  pending,
                                                   DBUS_ITERATION_DO_READING |
                                                   DBUS_ITERATION_BLOCK,
                                                   timeout_milliseconds - elapsed_milliseconds);
@@ -3500,6 +3499,161 @@ dbus_connection_send_with_reply (DBusConnection     *connection,
 }
 
 /**
+ * Queues a message to send, as with dbus_connection_send(),
+ * but also returns a #DBusPendingCall used to receive a reply to the
+ * message. If no reply is received in the given timeout_milliseconds,
+ * this function expires the pending reply and generates a synthetic
+ * error reply (generated in-process, not by the remote application)
+ * indicating that a timeout occurred.
+ *
+ * A #DBusPendingCall will see a reply message before any filters or
+ * registered object path handlers. See dbus_connection_dispatch() for
+ * details on when handlers are run.
+ *
+ * A #DBusPendingCall will always see exactly one reply message,
+ * unless it's cancelled with dbus_pending_call_cancel().
+ *
+ * If #NULL is passed for the pending_return, the #DBusPendingCall
+ * will still be generated internally, and used to track
+ * the message reply timeout. This means a timeout error will
+ * occur if no reply arrives, unlike with dbus_connection_send().
+ *
+ * If -1 is passed for the timeout, a sane default timeout is used. -1
+ * is typically the best value for the timeout for this reason, unless
+ * you want a very short or very long timeout.  If #DBUS_TIMEOUT_INFINITE is
+ * passed for the timeout, no timeout will be set and the call will block
+ * forever.
+ *
+ * @warning if the connection is disconnected or you try to send Unix
+ * file descriptors on a connection that does not support them, the
+ * #DBusPendingCall will be set to #NULL, so be careful with this.
+ *
+ * @param connection the connection
+ * @param message the message to send
+ * @param pending_return return location for a #DBusPendingCall
+ * object, or #NULL if connection is disconnected or when you try to
+ * send Unix file descriptors on a connection that does not support
+ * them.
+ * @param timeout_milliseconds timeout in milliseconds, -1 (or
+ *  #DBUS_TIMEOUT_USE_DEFAULT) for default or #DBUS_TIMEOUT_INFINITE for no
+ *  timeout
+ * @returns #FALSE if no memory, #TRUE otherwise.
+ *
+ */
+dbus_bool_t
+dbus_connection_send_with_reply_set_notify (DBusConnection     *connection,
+                                 DBusMessage        *message,
+                                 DBusPendingCall   **pending_return,
+                                 DBusPendingCallNotifyFunction function0,
+                                 void               *user_data0,
+                                 DBusFreeFunction    free_user_data0,
+                                 int                 timeout_milliseconds)
+{
+  DBusPendingCall *pending;
+  dbus_int32_t serial = -1;
+  DBusDispatchStatus status;
+
+  _dbus_return_val_if_fail (connection != NULL, FALSE);
+  _dbus_return_val_if_fail (message != NULL, FALSE);
+  _dbus_return_val_if_fail (timeout_milliseconds >= 0 || timeout_milliseconds == -1, FALSE);
+
+  if (pending_return)
+    *pending_return = NULL;
+
+  CONNECTION_LOCK (connection);
+
+#ifdef HAVE_UNIX_FD_PASSING
+
+  if (!_dbus_transport_can_pass_unix_fd(connection->transport) &&
+      message->n_unix_fds > 0)
+    {
+      /* Refuse to send fds on a connection that cannot handle
+         them. Unfortunately we cannot return a proper error here, so
+         the best we can do is return TRUE but leave *pending_return
+         as NULL. */
+      CONNECTION_UNLOCK (connection);
+      return TRUE;
+    }
+
+#endif
+
+   if (!_dbus_connection_get_is_connected_unlocked (connection))
+    {
+      CONNECTION_UNLOCK (connection);
+
+      return TRUE;
+    }
+
+  pending = _dbus_pending_call_new_unlocked (connection,
+                                             timeout_milliseconds,
+                                             reply_handler_timeout);
+
+  CONNECTION_UNLOCK (connection);
+  if (pending == NULL)
+    {
+      return FALSE;
+    }
+
+  if (!dbus_pending_call_set_notify(pending, function0, user_data0, free_user_data0))
+    {
+      return FALSE;
+    }
+  CONNECTION_LOCK (connection);
+
+  /* Assign a serial to the message */
+  serial = dbus_message_get_serial (message);
+  if (serial == 0)
+    {
+      serial = _dbus_connection_get_next_client_serial (connection);
+      dbus_message_set_serial (message, serial);
+    }
+
+  if (!_dbus_pending_call_set_timeout_error_unlocked (pending, message, serial))
+    goto error;
+
+  /* Insert the serial in the pending replies hash;
+   * hash takes a refcount on DBusPendingCall.
+   * Also, add the timeout.
+   */
+  if (!_dbus_connection_attach_pending_call_unlocked (connection,
+						      pending))
+    goto error;
+
+  if (!_dbus_connection_send_unlocked_no_update (connection, message, NULL))
+    {
+      _dbus_connection_detach_pending_call_and_unlock (connection,
+						       pending);
+      goto error_unlocked;
+    }
+
+  if (pending_return)
+    *pending_return = pending; /* hand off refcount */
+  else
+    {
+      _dbus_connection_detach_pending_call_unlocked (connection, pending);
+      /* we still have a ref to the pending call in this case, we unref
+       * after unlocking, below
+       */
+    }
+
+  status = _dbus_connection_get_dispatch_status_unlocked (connection);
+
+  /* this calls out to user code */
+  _dbus_connection_update_dispatch_status_and_unlock (connection, status);
+
+  if (pending_return == NULL)
+    dbus_pending_call_unref (pending);
+
+  return TRUE;
+
+ error:
+  CONNECTION_UNLOCK (connection);
+ error_unlocked:
+  dbus_pending_call_unref (pending);
+  return FALSE;
+}
+
+/**
  * Sends a message and blocks a certain time period while waiting for
  * a reply.  This function does not reenter the main loop,
  * i.e. messages other than the reply are queued up but not
@@ -3582,13 +3736,9 @@ dbus_connection_send_with_reply_and_block (DBusConnection     *connection,
    */
   _dbus_assert (reply != NULL);
   
-   if (dbus_set_error_from_message (error, reply))
-    {
-      dbus_message_unref (reply);
-      return NULL;
-    }
-  else
-    return reply;
+  dbus_set_error_from_message (error, reply);
+
+  return reply;
 }
 
 /**
@@ -6377,3 +6527,4 @@ _dbus_connection_get_address (DBusConnection *connection)
 #endif
 
 /** @} */
+

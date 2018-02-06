@@ -61,6 +61,7 @@ struct DBusString
  */
 #define _dbus_string_get_data(s) ((char*)(((DBusString*)(s))->dummy1))
 #define _dbus_string_get_length(s) (((DBusString*)(s))->dummy2)
+#define _dbus_string_get_allocated(s) (((DBusString*)(s))->dummy3 - _DBUS_STRING_ALLOCATION_PADDING)
 #define _dbus_string_set_byte(s, i, b) ((((unsigned char*)(((DBusString*)(s))->dummy1))[(i)]) = (unsigned char) (b))
 #define _dbus_string_get_byte(s, i) (((const unsigned char*)(((DBusString*)(s))->dummy1))[(i)])
 #define _dbus_string_get_const_data(s) ((const char*)(((DBusString*)(s))->dummy1))
@@ -150,6 +151,10 @@ void          _dbus_string_copy_to_buffer_with_nul (const DBusString  *str,
 DBUS_PRIVATE_EXPORT
 int           _dbus_string_get_length            (const DBusString  *str);
 #endif /* !_dbus_string_get_length */
+
+#ifndef _dbus_string_get_allocated
+int           _dbus_string_get_allocated         (const DBusString  *str);
+#endif /* !_dbus_string_get_allocated */
 
 /**
  * Get the string's length as an unsigned integer, for comparison with
